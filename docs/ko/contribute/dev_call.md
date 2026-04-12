@@ -7,7 +7,7 @@ const { site } = useData();
 
 <div v-if="site.title !== 'PX4 Guide (main)'">
   <div class="custom-block danger">
-    <p class="custom-block-title">This page may be out of date. <a href="https://docs.px4.io/main/en/contribute/dev_call">See the latest version</a>.</p>
+    <p class="custom-block-title">This page may be out of date. <a href="/en/contribute/dev_call.md">See the latest version</a>.</p>
   </div>
 </div>
 
@@ -15,8 +15,8 @@ The PX4 dev team and community come together to discuss any topic of interest to
 
 ## Who should attend?
 
-- 핵심 프로젝트 관리자
-- 구성요소 관리자
+- Code Owners
+- Reviewers
 - 테스트 팀 관리자
 - 드론코드 회원
 - Community members (you!)
