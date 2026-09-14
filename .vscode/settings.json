@@ -14,9 +14,15 @@
         "cmake.buildBeforeRun": true,
         "cmake.buildDirectory": "${workspaceFolder}/build/${variant:CONFIG}",
         "cmake.configureOnOpen": true,
+        "cmake.configureSettings": {
+                "Python3_EXECUTABLE": "${workspaceFolder}/.venv/bin/python",
+                "PYTHON_EXECUTABLE": "${workspaceFolder}/.venv/bin/python"
+        },
         "cmake.ctest.parallelJobs": 1,
+        "cmake.generator": "Ninja",
         "cmake.options.statusBarVisibility": "compact",
         "cmake.skipConfigureIfCachePresent": true,
+        "cmake.useCMakePresets": "never",
         "cmakeExplorer.buildDir": "${workspaceFolder}/build/px4_sitl_test",
         "cmakeExplorer.parallelJobs": 1,
         "cmakeExplorer.suiteDelimiter": "-",
