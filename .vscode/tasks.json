@@ -50,6 +50,24 @@
             }
         },
         {
+            "label": "jmavsim build",
+            "type": "process",
+            "command": "${config:cmake.cmakePath}",
+            "args": [
+                "--build", "${command:cmake.buildDirectory}",
+                "--target", "px4", "build_jmavsim"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": "$gcc",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            }
+        },
+        {
             "label": "jmavsim kill",
             "type": "shell",
             "command": "kill $(ps aux | grep jmavsim | grep -v 'grep' | awk '{print $2}') || true",
