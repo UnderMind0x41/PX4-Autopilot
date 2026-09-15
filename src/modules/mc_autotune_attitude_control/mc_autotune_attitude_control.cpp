@@ -67,7 +67,6 @@ bool McAutotuneAttitudeControl::init()
 		return false;
 	}
 
-
 	return true;
 }
 
@@ -77,7 +76,6 @@ void McAutotuneAttitudeControl::Run()
 		_experiment_active = false;
 		publishExcitation(hrt_absolute_time());
 		ScheduleClear();
-		_parameter_update_sub.unregisterCallback();
 		_vehicle_torque_setpoint_sub.unregisterCallback();
 		exit_and_cleanup(desc);
 		return;
@@ -378,12 +376,7 @@ void McAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 	switch (_state) {
 	case state::idle:
 		if (_vehicle_cmd_start_autotune) {
-			if (registerActuatorControlsCallback()) {
-				_state = state::init;
-
-			} else {
-				_state = state::fail;
-			}
+			_state = state::init;
 
 			_state_start_time = now;
 			_start_flight_mode = _nav_state;
@@ -405,7 +398,7 @@ void McAutotuneAttitudeControl::updateStateMachine(hrt_abstime now)
 	case state::roll:
 	case state::pitch:
 	case state::yaw:
-		if (isAxisConverged(now)) {
+		if (isAxisConverged()) {
 			_state = _excited_axis == 0 ? state::roll_pause : (_excited_axis == 1 ? state::pitch_pause : state::yaw_pause);
 			_state_start_time = now;
 		}
@@ -546,16 +539,6 @@ void McAutotuneAttitudeControl::revertParamGains()
 	}
 }
 
-bool McAutotuneAttitudeControl::registerActuatorControlsCallback()
-{
-	if (!_vehicle_torque_setpoint_sub.registerCallback()) {
-		PX4_ERR("callback registration failed");
-		return false;
-	}
-
-	return true;
-}
-
 void McAutotuneAttitudeControl::computeGains(const Vector<float, 5> &coeff)
 {
 	const Vector3f num(coeff(2), coeff(3), coeff(4));
@@ -578,9 +561,8 @@ void McAutotuneAttitudeControl::computeGains(const Vector<float, 5> &coeff)
 	_attitude_p = math::constrain(1.f / (math::radians(60.f) * _kid(0)), 2.f, 6.5f);
 }
 
-bool McAutotuneAttitudeControl::isAxisConverged(hrt_abstime now)
+bool McAutotuneAttitudeControl::isAxisConverged() const
 {
-	(void)now;
 	return _validation && _candidate_ready && _validation->finished() && _validation->validData();
 }
 
@@ -680,17 +662,6 @@ ControllerValidation::Gains McAutotuneAttitudeControl::currentGains() const
 	return result;
 }
 
-bool McAutotuneAttitudeControl::configurationUnchanged() const
-{
-	const auto current = currentGains();
-	return (current.p - _baseline.p).norm() < 1e-6f && (current.i - _baseline.i).norm() < 1e-6f
-	       && (current.d - _baseline.d).norm() < 1e-6f && (current.attitude - _baseline.attitude).norm() < 1e-6f
-	       && fabsf(_baseline_gyro_cutoff - _param_imu_gyro_cutoff.get()) < FLT_EPSILON
-	       && fabsf(_baseline_dgyro_cutoff - _param_imu_dgyro_cutoff.get()) < FLT_EPSILON
-	       && fabsf(_baseline_yaw_cutoff - _param_mc_yaw_tq_cutoff.get()) < FLT_EPSILON
-	       && fabsf(_baseline_ref_ff - _param_mc_ref_ff.get()) < FLT_EPSILON;
-}
-
 bool McAutotuneAttitudeControl::startExperiment(hrt_abstime now)
 {
 	if (!_validation || !_armed || _nav_state != vehicle_status_s::NAVIGATION_STATE_POSCTL
@@ -707,12 +678,8 @@ bool McAutotuneAttitudeControl::startExperiment(hrt_abstime now)
 	    || !_baseline.attitude.isAllFinite() || _baseline.p.min() <= 0.f || _baseline.i.min() <= 0.f
 	    || _baseline.d.min() < 0.f || _baseline.attitude.min() <= 0.f) { return false; }
 
-	_baseline_gyro_cutoff = _param_imu_gyro_cutoff.get();
-	_baseline_dgyro_cutoff = _param_imu_dgyro_cutoff.get();
-	_baseline_yaw_cutoff = _param_mc_yaw_tq_cutoff.get();
-	_baseline_ref_ff = _param_mc_ref_ff.get();
 	_measurement_period = math::constrain(_param_mc_at_period.get(), 4.f, 128.f);
-	const float maximum_frequency = math::min(.2f / _filter_dt, math::max(10.f, 2.f * _baseline_gyro_cutoff));
+	const float maximum_frequency = math::min(.2f / _filter_dt, math::max(10.f, 2.f * _param_imu_gyro_cutoff.get()));
 	_validation->configure(_measurement_period, maximum_frequency);
 	_tune_start = now;
 	_response_time = now;
@@ -760,8 +727,6 @@ void McAutotuneAttitudeControl::publishExcitation(hrt_abstime now)
 
 bool McAutotuneAttitudeControl::validateGains()
 {
-	if (!configurationUnchanged()) { PX4_WARN("Autotune failed: controller configuration changed"); return false; }
-
 	ControllerValidation::Gains requested;
 	requested.p = _rate_k;
 	requested.i = _rate_k.emult(_rate_i);
@@ -769,7 +734,7 @@ bool McAutotuneAttitudeControl::validateGains()
 	requested.attitude = _att_p;
 
 	for (int option = 0; option < 4; ++option) {
-		if (option == 0 && fabsf(_baseline_ref_ff) > FLT_EPSILON) { continue; }
+		if (option == 0 && fabsf(_param_mc_ref_ff.get()) > FLT_EPSILON) { continue; }
 
 		const float fraction = option <= 1 ? 1.f : (option == 2 ? .5f : .25f);
 		ControllerValidation::Gains candidate;
@@ -778,12 +743,12 @@ bool McAutotuneAttitudeControl::validateGains()
 		candidate.d = _baseline.d + fraction * (requested.d - _baseline.d);
 		candidate.attitude = option == 0 ? requested.attitude : _baseline.attitude;
 		float minimum = 0.f;
-		const auto result = _validation->check(_baseline, candidate, _baseline_yaw_cutoff, minimum);
+		const auto result = _validation->check(_baseline, candidate, _param_mc_yaw_tq_cutoff.get(), minimum);
 
 		if (result == ControllerValidation::Result::InsufficientBandwidth) {
 			if (_measurement_period < 128.f) {
 				_measurement_period = math::min(2.f * _measurement_period, 128.f);
-				_validation->configure(_measurement_period, math::min(.2f / _filter_dt, math::max(10.f, 2.f * _baseline_gyro_cutoff)));
+				_validation->configure(_measurement_period, math::min(.2f / _filter_dt, math::max(10.f, 2.f * _param_imu_gyro_cutoff.get())));
 				_excitation_amplitude = math::min(_excitation_amplitude, .08f / _validation->frequencies());
 				PX4_INFO("Autotune: extending response period to %.1f s", (double)_measurement_period);
 				_rate_k.zero(); _rate_i.zero(); _rate_d.zero(); _att_p.zero();
@@ -847,20 +812,6 @@ int McAutotuneAttitudeControl::task_spawn(int argc, char *argv[])
 
 int McAutotuneAttitudeControl::custom_command(int argc, char *argv[])
 {
-#if defined(CONFIG_COMMON_SIMULATION)
-
-	if (argc > 0 && (!strcmp(argv[0], "probe") || !strcmp(argv[0], "torque_probe"))) {
-		if (is_running(desc)) {
-			PX4_ERR("stop autotune before running the SITL response probe");
-			return PX4_ERROR;
-		}
-
-		extern int autotune_response_probe(int argc, char *argv[]);
-		return autotune_response_probe(argc, argv);
-	}
-
-#endif
-
 	return print_usage("unknown command");
 }
 

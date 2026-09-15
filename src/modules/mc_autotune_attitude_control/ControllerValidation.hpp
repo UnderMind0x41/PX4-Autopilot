@@ -108,7 +108,6 @@ public:
 		_amplitude = amplitude;
 		_last = 0;
 		_block = 0;
-		_error[axis] = _configuration_valid ? Error::None : Error::Configuration;
 		clearAxis(axis);
 		clearBlock();
 	}
@@ -329,9 +328,6 @@ private:
 				}
 			}
 		}
-
-		// dt is the controller sample interval, not the response subscriber interval.
-
 	}
 
 	void clearBlock()
@@ -352,6 +348,7 @@ private:
 
 		const int group = _block / GroupPeriods;
 		const int n = ++_periods[group][_axis];
+		// Average the controller interval, not the response subscriber interval.
 		_dt_sum[group][_axis] += _controller_dt / _samples;
 		// Remove a jointly fitted linear drift. Complete integer periods make
 		// different tones orthogonal; their coupling to the ramp is analytic.

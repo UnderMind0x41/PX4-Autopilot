@@ -221,27 +221,8 @@ MulticopterRateControl::Run()
 
 			// apply low-pass filtering on yaw axis to reduce high frequency torque caused by rotor acceleration
 			torque_setpoint(2) = _output_lpf_yaw.update(torque_setpoint(2), dt);
-#if defined(CONFIG_COMMON_SIMULATION)
-			// Research-only additive disturbance, after the controller's output filters.
-			// Normal autotune publishes zero rate_sp in STATE_VERIFICATION.
-			autotune_attitude_control_status_s probe{};
 
-			if (_autotune_probe_sub.copy(&probe) && probe.state == probe.STATE_VERIFICATION
-			    && hrt_elapsed_time(&probe.timestamp) < 100_ms && !_landed && !_vehicle_status.is_vtol
-			    && Vector3f(probe.rate_sp).isAllFinite()) {
-				torque_setpoint += Vector3f(probe.rate_sp);
-				debug_vect_s applied{};
-				applied.timestamp = hrt_absolute_time();
-				memcpy(applied.name, "AT_TORQUE", 10);
-				applied.x = probe.rate_sp[0];
-				applied.y = probe.rate_sp[1];
-				applied.z = probe.rate_sp[2];
-				_autotune_probe_log_pub.publish(applied);
-			}
-
-#endif
-
-			// publish rate controller status
+			// Apply only a fresh autotune command for the current flight mode.
 			autotune_excitation_s excitation{};
 			const bool autotune_active = _autotune_excitation_sub.copy(&excitation)
 						     && hrt_elapsed_time(&excitation.timestamp) < 100_ms

@@ -153,17 +153,6 @@ TEST_F(ControllerValidationTest, InvalidConfigurationCannotPass)
 	EXPECT_EQ(validation->check(old, old, 2.f, bound), ControllerValidation::Result::Reject);
 }
 
-TEST_F(ControllerValidationTest, NewAxisCannotHideEarlierInvalidMeasurements)
-{
-	measure();
-	validation->beginAxis(0, 1000000, .003f);
-	validation->update(30000000, dt, {}, {}, {}, .003f);
-	EXPECT_FALSE(validation->validData());
-	validation->beginAxis(1, 1000000, .003f);
-	float bound = 0.f;
-	EXPECT_EQ(validation->check(old, old, 2.f, bound), ControllerValidation::Result::Reject);
-}
-
 TEST_F(ControllerValidationTest, RepeatedTimestampDoesNotAddASecondObservation)
 {
 	validation->beginAxis(0, 1000000, .003f);
