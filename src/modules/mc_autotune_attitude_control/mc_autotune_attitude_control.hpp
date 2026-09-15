@@ -101,10 +101,9 @@ private:
 	void checkFilters();
 
 	void updateStateMachine(hrt_abstime now);
-	bool registerActuatorControlsCallback();
 	void stopAutotune();
 	void copyGains(int index);
-	bool isAxisConverged(hrt_abstime now);
+	bool isAxisConverged() const;
 	void computeGains(const matrix::Vector<float, 5> &coeff);
 	bool areGainsGood() const;
 	void saveGainsToParams();
@@ -113,7 +112,7 @@ private:
 
 
 	uORB::SubscriptionCallbackWorkItem _vehicle_torque_setpoint_sub{this, ORB_ID(vehicle_torque_setpoint)};
-	uORB::SubscriptionCallbackWorkItem _parameter_update_sub{this, ORB_ID(parameter_update)};
+	uORB::Subscription _parameter_update_sub{ORB_ID(parameter_update)};
 
 	uORB::Subscription _control_allocator_status_sub{ORB_ID(control_allocator_status)};
 	uORB::Subscription _actuator_controls_status_sub{ORB_ID(actuator_controls_status_0)};
@@ -136,10 +135,6 @@ private:
 	float _measurement_period{8.f};
 	float _excitation_amplitude{.003f};
 	int _excited_axis{0};
-	float _baseline_gyro_cutoff{0.f};
-	float _baseline_dgyro_cutoff{0.f};
-	float _baseline_yaw_cutoff{0.f};
-	float _baseline_ref_ff{0.f};
 	uORB::Subscription _autotune_response_sub{ORB_ID(autotune_response)};
 	uORB::Subscription _vehicle_attitude_sub{ORB_ID(vehicle_attitude)};
 	uORB::Publication<autotune_excitation_s> _autotune_excitation_pub{ORB_ID(autotune_excitation)};
@@ -147,7 +142,6 @@ private:
 	void startAxis(int axis, hrt_abstime now);
 	void publishExcitation(hrt_abstime now);
 	bool validateGains();
-	bool configurationUnchanged() const;
 	ControllerValidation::Gains currentGains() const;
 
 	enum class state {
@@ -216,7 +210,6 @@ private:
 		(ParamFloat<px4::params::MC_AT_RISE_TIME>) _param_mc_at_rise_time,
 		(ParamFloat<px4::params::MC_AT_PERIOD>) _param_mc_at_period,
 		(ParamFloat<px4::params::MC_AT_TIMEOUT>) _param_mc_at_timeout,
-		(ParamFloat<px4::params::IMU_DGYRO_CUTOFF>) _param_imu_dgyro_cutoff,
 		(ParamFloat<px4::params::MC_YAW_TQ_CUTOFF>) _param_mc_yaw_tq_cutoff,
 		(ParamInt<px4::params::MC_BAT_SCALE_EN>) _param_mc_bat_scale_en,
 		(ParamFloat<px4::params::MC_REF_FF>) _param_mc_ref_ff,

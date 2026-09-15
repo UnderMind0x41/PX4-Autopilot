@@ -62,10 +62,6 @@
 #include <uORB/topics/vehicle_torque_setpoint.h>
 #include <uORB/topics/autotune_excitation.h>
 #include <uORB/topics/autotune_response.h>
-#if defined(CONFIG_COMMON_SIMULATION)
-#include <uORB/topics/autotune_attitude_control_status.h>
-#include <uORB/topics/debug_vect.h>
-#endif
 
 using namespace time_literals;
 
@@ -109,10 +105,6 @@ private:
 	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
 	uORB::Subscription _autotune_excitation_sub{ORB_ID(autotune_excitation)};
 	uORB::Publication<autotune_response_s> _autotune_response_pub{ORB_ID(autotune_response)};
-#if defined(CONFIG_COMMON_SIMULATION)
-	uORB::Subscription _autotune_probe_sub {ORB_ID(autotune_attitude_control_status)};
-	uORB::Publication<debug_vect_s> _autotune_probe_log_pub{ORB_ID(debug_vect)};
-#endif
 
 	uORB::SubscriptionInterval _parameter_update_sub{ORB_ID(parameter_update), 1_s};
 

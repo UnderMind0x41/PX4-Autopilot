@@ -54,5 +54,4 @@ acceptance. Vehicle mass is not used as a proxy for its dynamics.
 
 The streaming observer uses approximately 35 KiB of heap storage. The rate loop
 publishes synchronous measurement data; the frequency analysis runs in the
-Autotune work item. The `probe`/`torque_probe` CLI tools are SITL research tools;
-they are not needed by the firmware acceptance path.
+Autotune work item.

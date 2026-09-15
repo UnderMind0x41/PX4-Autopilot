@@ -2,13 +2,15 @@
 """X500 Autotune regression, including MAVLink progress and persistent PID gains.
 
 Requires a built Gazebo SITL (make px4_sitl_default), Gazebo and pymavlink.
-Usage: python3 test/test_sitl_autotune.py [--output /tmp/autotune-results]
-Runs an isolated PX4 instance and Gazebo partition, with temporary parameters.
+Usage: python3 test/test_sitl_autotune.py --output /tmp/autotune-results
+Runs an isolated PX4 instance, Gazebo partition and MAVLink connection.
 """
 
 import argparse
 from collections import deque
 import json
+import hashlib
+import shlex
 import math
 import os
 from pathlib import Path
@@ -17,7 +19,6 @@ import shutil
 import signal
 import socket
 import subprocess
-import tempfile
 import time
 
 from pymavlink import mavutil
@@ -32,6 +33,10 @@ def unused_port():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
+
+
+class AutotuneRejected(AssertionError):
+    """PX4 explicitly rejected the autotune command."""
 
 
 class AutotuneSITL:
@@ -52,6 +57,11 @@ class AutotuneSITL:
         self.env.pop("PX4_GZ_MODEL_NAME", None)
         self.env.pop("PX4_GZ_STANDALONE", None)
         self.env.pop("PX4_SIM_SPEED_FACTOR", None)
+        # rcS sources this hook through PATH. Suppress the default links, which
+        # otherwise expose every parallel test to QGC on UDP 14550. start()
+        # creates the sole MAVLink link on a private port, including after reboot.
+        (root / "px4-rc.mavlink").write_text("# MAVLink is started by the test harness.\n")
+        self.env["PATH"] = str(root) + os.pathsep + self.env.get("PATH", os.defpath)
         (root / "etc").symlink_to(binary.parent.parent / "etc", target_is_directory=True)
         shutil.copy(binary.parent.parent / "rootfs/gz_env.sh", root)
 
@@ -137,7 +147,10 @@ class AutotuneSITL:
 
     def tune_and_land(self, before, label):
         self.messages.clear()
-        timeout = float(self.client('param', 'show', '-q', 'MC_AT_TIMEOUT'))
+        try:
+            timeout = float(self.client('param', 'show', '-q', 'MC_AT_TIMEOUT'))
+        except (ValueError, subprocess.CalledProcessError):
+            timeout = 120.  # Original firmware has a fixed per-state timeout.
         deadline = time.monotonic() + max(120, timeout / self.time_scale + 30)
         next_request = 0
         landing = False
@@ -155,6 +168,8 @@ class AutotuneSITL:
                         continue
                     log.write(json.dumps(message.to_dict()) + "\n")
                     log.flush()
+                    if message.result == mavutil.mavlink.MAV_RESULT_FAILED:
+                        raise AutotuneRejected(str(message))
                     assert message.result in (mavutil.mavlink.MAV_RESULT_IN_PROGRESS,
                                               mavutil.mavlink.MAV_RESULT_ACCEPTED), str(message)
                     if message.progress != last_progress:
@@ -235,29 +250,99 @@ class AutotuneSITL:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--binary", type=Path, default=Path("build/px4_sitl_default/bin/px4"))
-    parser.add_argument("--output", type=Path)
+    parser.add_argument('--binary', type=Path, default=Path('build/px4_sitl_default/bin/px4'))
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--model', default='x500')
+    parser.add_argument('--autostart', type=int)
+    parser.add_argument('--models-root', type=Path)
+    parser.add_argument('--param-file', type=Path)
+    parser.add_argument('--param', action='append', default=[])
+    parser.add_argument('--instance', type=int, default=73)
+    parser.add_argument('--speed-factor', type=float, default=1.)
+    parser.add_argument('--cancel-first', action='store_true')
+    parser.add_argument('--expect-failure', action='store_true')
     args = parser.parse_args()
-    root = args.output.resolve() if args.output else Path(tempfile.mkdtemp(prefix="px4-autotune-"))
-    root.mkdir(parents=True, exist_ok=True)
-    print(f"Artifacts: {root}", flush=True)
-    sim = AutotuneSITL(args.binary.resolve(), root)
+    root = args.output.resolve()
+    root.mkdir(parents=True, exist_ok=False)
+    original = args.binary.resolve()
+    firmware = root / 'firmware'
+    (firmware / 'bin').mkdir(parents=True)
+    (firmware / 'rootfs').mkdir()
+    binary = firmware / 'bin/px4'
+    shutil.copy2(original, binary)
+    for client in original.parent.glob('px4-*'):
+        if client.is_symlink() and client.resolve() == original:
+            (binary.parent / client.name).symlink_to('px4')
+        else:
+            shutil.copy2(client, binary.parent / client.name)
+    (firmware / 'etc').symlink_to(original.parent.parent / 'etc', target_is_directory=True)
+    shutil.copy(original.parent.parent / 'rootfs/gz_env.sh', firmware / 'rootfs')
+    sim = AutotuneSITL(binary, root)
+    sim.instance, sim.system = args.instance, args.instance + 1
+    sim.time_scale = args.speed_factor
+    sim.input_interval = .1 / args.speed_factor
+    sim.env['PX4_SIM_SPEED_FACTOR'] = str(args.speed_factor)
+    sim.env['PX4_SIM_MODEL'] = 'gz_' + args.model
+    if args.autostart:
+        sim.env['PX4_SYS_AUTOSTART'] = str(args.autostart)
+    if args.models_root:
+        env = root / 'gz_env.sh'
+        env.write_text('\n'.join(
+            'export PX4_GZ_MODELS=' + shlex.quote(str(args.models_root.resolve()))
+            if line.startswith('export PX4_GZ_MODELS=') else line
+            for line in env.read_text().splitlines()) + '\n')
+    params = json.loads(args.param_file.read_text()) if args.param_file else {}
+    params.update(entry.split('=', 1) for entry in args.param)
+    manifest = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()}
+    manifest.update(binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(), parameters=params)
+    (root / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+    result = {'status': 'running'}
     try:
         sim.start()
-        before = sim.gains("before")
+        for name, value in params.items():
+            sim.client('param', 'set', name, str(value))
+            sim.pump(.05)
+        before = sim.gains('before')
         sim.takeoff()
-        sim.cancel_by_mode_change(before)
-        after = sim.tune_and_land(before, "first")
+        if args.cancel_first:
+            sim.cancel_by_mode_change(before)
+        try:
+            after = sim.tune_and_land(before, 'autotune')
+        except AutotuneRejected:
+            after = sim.gains('after-rejection')
+            result['all_15_unchanged'] = after == before
+            sim.client('commander', 'land')
+            sim.wait(lambda: sim.status('arming_state', 1), 45, 'landing after rejection')
+            assert args.expect_failure, 'Unexpected autotune rejection'
+            assert after == before, 'Rejected tune changed gains'
+        else:
+            assert not args.expect_failure, 'Expected rejection, but tune succeeded'
+        sim.pump(3)
         sim.stop_px4()
         sim.start(reboot=True)
-        assert sim.gains("after-reboot") == after, "Gains lost after full PX4 restart"
-        print("PASS: all gains retained exactly after full PX4 restart", flush=True)
-        sim.takeoff()
-        sim.tune_and_land(after, "second")
+        assert sim.gains('after-reboot') == after, 'Gains lost after full PX4 restart'
+        result['all_15_persisted'] = True
+        if not args.expect_failure:
+            sim.takeoff()
+            sim.messages.clear()
+            sim.pump(60 / sim.time_scale)
+            attitudes = [m for m in sim.messages if m.get_type() == 'ATTITUDE']
+            assert attitudes, 'No attitude telemetry during post-tune hover'
+            tilt = [max(abs(m.roll), abs(m.pitch)) for m in attitudes]
+            assert all(math.isfinite(v) for v in tilt), 'Non-finite attitude'
+            result['post_tune_max_tilt_deg'] = math.degrees(max(tilt))
+            assert max(tilt) < math.radians(20), 'Excessive tilt during post-tune hover'
+            sim.client('commander', 'land')
+            sim.wait(lambda: sim.status('arming_state', 1), 45, 'post-tune landing')
         sim.stop_px4()
+        result['status'] = 'expected_rejection' if args.expect_failure else 'passed'
+    except BaseException as error:
+        result.update(status='failed', error=repr(error))
+        raise
     finally:
+        (root / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
         sim.close()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
