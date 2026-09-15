@@ -39,9 +39,25 @@ px4_add_module(
 	SRCS
 		mc_autotune_attitude_control.cpp
 		mc_autotune_attitude_control.hpp
+		AutotuneResponseProbe.cpp
+		ControllerValidation.hpp
+	MODULE_CONFIG
+		mc_autotune_attitude_control_params.yaml
 	DEPENDS
 		hysteresis
 		mathlib
 		px4_work_queue
 		SystemIdentification
+)
+
+px4_add_functional_gtest(
+	SRC McAutotuneAttitudeControlTest.cpp
+	LINKLIBS mc_autotune_attitude_control
+)
+
+px4_add_unit_gtest(SRC ControllerValidationTest.cpp LINKLIBS mathlib)
+
+px4_add_functional_gtest(
+	SRC AutotuneVtolTest.cpp
+	LINKLIBS mc_autotune_attitude_control fw_autotune_attitude_control
 )
