@@ -40,6 +40,7 @@
 
 #include <px4_platform_common/getopt.h>
 
+#include <cstdlib>
 #include <iostream>
 #include <string>
 
@@ -975,6 +976,11 @@ int GZBridge::task_spawn(int argc, char *argv[])
 	}
 
 	PX4_INFO("world: %s, model: %s", world_name.c_str(), model_name.c_str());
+
+	// Pin gz-transport discovery to loopback by default so it doesn't pick an unreachable
+	// interface on machines with multiple NICs (VPN, Docker, etc). Left untouched if the
+	// user already exported GZ_IP, e.g. for a genuine multi-host simulator setup.
+	setenv("GZ_IP", "127.0.0.1", 0);
 
 	GZBridge *instance = new GZBridge(world_name, model_name);
 
