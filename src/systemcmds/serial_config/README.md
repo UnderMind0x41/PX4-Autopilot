@@ -5,9 +5,11 @@ service starts. It defaults to `0` and requires a reboot. The setting follows
 the physical port, so GNSS, MAVLink and other services using `rc.serial_port`
 share it. No background task or protocol driver changes are needed.
 
-Enable `CONFIG_SYSTEMCMDS_SERIAL_CONFIG=y` in the board configuration and
-`CONFIG_STM32H7_USART_SWAP=y` in NuttX. Support is currently limited to STM32H7,
-whose UART driver preserves SWAP across close/reopen. Enabled on Kakute H7.
+`CONFIG_SYSTEMCMDS_SERIAL_CONFIG=y` is the default for STM32H7 firmware targets
+with a ROMFS, excluding bootloaders. It requires `CONFIG_STM32H7_USART_SWAP=y`
+in NuttX. Other architectures remain disabled: their UART drivers must first
+be verified to preserve SWAP across close/reopen. The runtime parameters still
+default to `0`, so enabling the command does not swap any pins by itself.
 
 For example, set `SER_GPS1_SWAP=1` in QGroundControl and reboot to swap Kakute H7's
 UART4 (`/dev/ttyS3`). Set it back to `0` and reboot to restore normal assignments.
