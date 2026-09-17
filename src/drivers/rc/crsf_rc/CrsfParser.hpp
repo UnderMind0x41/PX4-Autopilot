@@ -43,6 +43,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <px4_platform_common/px4_config.h>
 
 #define CRSF_CHANNEL_COUNT 16
 
@@ -88,5 +89,8 @@ typedef struct {
 
 void CrsfParser_Init(void);
 bool CrsfParser_LoadBuffer(const uint8_t *buffer, const uint32_t size);
+#ifdef CONFIG_RC_CRSF_INJECT
+bool CrsfParser_InjectBuffer(const uint8_t *buffer, const uint32_t size);
+#endif
 uint32_t CrsfParser_FreeQueueSize(void);
 bool CrsfParser_TryParseCrsfPacket(CrsfPacket_t *const new_packet, CrsfParserStatistics_t *const parser_statistics);
