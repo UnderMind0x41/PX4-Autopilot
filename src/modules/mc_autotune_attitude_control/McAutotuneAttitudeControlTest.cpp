@@ -33,19 +33,10 @@
 
 #include <gtest/gtest.h>
 #include <hrt_work.h>
-#include <sys/boardctl.h>
-#include <cerrno>
 
 #include "mc_autotune_attitude_control.hpp"
 
-#if defined(CONFIG_BOARDCTL_RESET)
-// Functional tests do not link the SITL main that implements process restart.
-int boardctl(unsigned int, uintptr_t)
-{
-	return -ENOSYS;
-}
-#endif
-
+// The shared gtest_functional_main supplies the test-only boardctl() stub.
 class McAutotuneAttitudeControlTest : public ::testing::Test
 {
 public:

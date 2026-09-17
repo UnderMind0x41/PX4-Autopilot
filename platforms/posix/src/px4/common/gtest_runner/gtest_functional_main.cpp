@@ -41,7 +41,8 @@
 #include <cerrno>
 
 #if defined(CONFIG_BOARDCTL_RESET)
-// Functional tests do not run the SITL main that implements process restart.
+// Test-only stub: report unsupported instead of restarting the test process.
+// The SITL executable uses the real boardctl() in ../main.cpp to restart itself.
 int boardctl(unsigned int, uintptr_t)
 {
 	return -ENOSYS;
