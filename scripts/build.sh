@@ -3,6 +3,8 @@
 set -uo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd) || exit 1
+LOCAL_ROOT=$ROOT
+SOURCE_REF=current SOURCE_COMMIT='' PROFILE='' LIST_TARGETS=0 LIST_REFS=0
 if ((BASH_VERSINFO[0] < 4)); then
 	printf 'Требуется Bash 4 или новее.\n' >&2
 	exit 1
@@ -38,6 +40,9 @@ PX4 Build — сборка и настройка прошивок в терми�
   ./scripts/build.sh --text                  меню без whiptail
   ./scripts/build.sh --list-targets          доступные конфигурации
   ./scripts/build.sh --target px4_sitl_default --action build
+  ./scripts/build.sh --ref v1.16.0 --target holybro_kakuteh7_default --action build
+  ./scripts/build.sh --target holybro_kakuteh7_default --action save-config --profile my-config
+  ./scripts/build.sh --target holybro_kakuteh7_default --action load-config --profile my-config
   ./scripts/build.sh --target holybro_kakuteh7dualimu_default --action px4-config
   ./scripts/build.sh --target holybro_kakuteh7dualimu_default --action kernel-config
   ./scripts/build.sh --target px4_sitl_default --action run --sim gz_x500
@@ -47,8 +52,11 @@ PX4 Build — сборка и настройка прошивок в терми�
 
 Опции:
   --target NAME       полное имя из --list-targets
+  --ref REF           current (по умолчанию), локальная/удалённая ветка, тег или SHA
+  --list-refs         текущая ветка, известные локально ветки и теги
   --action ACTION     build, build-upload, upload, px4-config, kernel-config, clean, run, info,
-                      doctor, python-setup
+                      doctor, python-setup, save-config, load-config, list-configs
+  --profile NAME      имя профиля для save-config / load-config
   --firmware FILE     существующий .px4 или .bin для upload (без сборки)
   --method METHOD     auto (по умолчанию), serial или dfu
   --dfu-serial SERIAL серийный номер DFU, обязателен при нескольких платах
@@ -61,7 +69,16 @@ PX4 Build — сборка и настройка прошивок в терми�
   --help              эта справка
 
 Сборка выполняется на текущем компьютере штатной командой make PX4.
-Python: PX4_PYTHON, затем .venv/bin/python, затем python3 из PATH.
+current собирает рабочий каталог: локальные коммиты и незакоммиченные изменения.
+Другие refs используют отдельный worktree в build/.build-sh/sources/<SHA>.
+Его настройки и результаты сохраняются между запусками; подмодули загружаются
+перед первой сборкой. Основная ветка при этом не переключается.
+Ветки и теги берутся из локального Git; обновить список: git fetch --all --tags.
+Профили: boards/<производитель>/<плата>/custom-configs/<вариант>/<имя>/
+в исходном репозитории. В профиле — PX4 .px4board и NuttX defconfig (если есть).
+Загрузка заменяет конфиги выбранного исходного каталога с резервной копией;
+существующий профиль не перезаписывается — используйте новое имя.
+Python: PX4_PYTHON, затем .venv выбранного или основного каталога, затем python3 из PATH.
 PX4-конфигуратор сохраняет boards/.../*.px4board; NuttX — nuttx-config/.../defconfig.
 Перед открытием конфигуратора исходный файл копируется в build/.build-sh/backups.
 SITL работает без ядра NuttX. Сборка и запуск SITL — отдельные действия.
@@ -79,42 +96,48 @@ EOF
 die() { printf 'Ошибка: %s\n' "$*" >&2; exit 1; }
 while (($#)); do
 	case $1 in
-		--target|--action|--jobs|--build-type|--sim|--firmware|--port|--method|--dfu-serial)
+		--target|--action|--jobs|--build-type|--sim|--firmware|--port|--method|--dfu-serial|--ref|--profile)
 			(($# >= 2)) || die "Для $1 требуется значение"
 			case $1 in
 				--target) TARGET=$2 ;; --action) ACTION=$2 ;; --jobs) JOBS=$2 ;;
 				--build-type) BUILD_TYPE=$2 ;; --sim) SIMULATOR=$2 ;;
 				--firmware) FIRMWARE=$2 ;; --port) PORT=$2 ;;
 				--method) UPLOAD_METHOD=$2 ;; --dfu-serial) DFU_SERIAL=$2 ;;
+				--ref) SOURCE_REF=$2 ;; --profile) PROFILE=$2 ;;
 			esac
 			shift 2 ;;
 		--text) FORCE_TEXT=1; shift ;;
 		--dry-run) DRY_RUN=1; shift ;;
-		--list-targets) printf '%s\n' "${!CONFIGS[@]}" | LC_ALL=C sort; exit 0 ;;
+		--list-targets) LIST_TARGETS=1; shift ;;
+		--list-refs) LIST_REFS=1; shift ;;
 		--help|-h) usage; exit 0 ;;
 		*) die "Неизвестная опция: $1 (см. --help)" ;;
 	esac
 done
 [[ -n $TARGET ]] || die 'Имя конфигурации не может быть пустым'
-[[ -n ${CONFIGS[$TARGET]:-} ]] || die "Неизвестная конфигурация: $TARGET"
 [[ $JOBS =~ ^[1-9][0-9]*$ && ${#JOBS} -le 4 ]] || die '--jobs: число от 1 до 9999'
 case $BUILD_TYPE in RelWithDebInfo|Release|Debug|MinSizeRel) ;; *) die 'Неизвестный тип сборки' ;; esac
-case $ACTION in ''|build|build-upload|upload|px4-config|kernel-config|clean|run|info|doctor|python-setup) ;; *) die 'Неизвестное действие' ;; esac
+case $ACTION in ''|build|build-upload|upload|px4-config|kernel-config|clean|run|info|doctor|python-setup|save-config|load-config|list-configs) ;; *) die 'Неизвестное действие' ;; esac
+[[ -z $PROFILE || $ACTION == save-config || $ACTION == load-config ]] || die '--profile применяется только к save-config / load-config'
 [[ -z $FIRMWARE || $ACTION == upload ]] || die '--firmware применяется только к --action upload'
 case $UPLOAD_METHOD in auto|serial|dfu) ;; *) die '--method: auto, serial или dfu' ;; esac
 [[ -z $PORT || $UPLOAD_METHOD != dfu ]] || die 'DFU использует --dfu-serial, а не --port'
+
+# shellcheck source=scripts/build-configs.sh
+source "$LOCAL_ROOT/scripts/build-configs.sh"
 
 properties() {
 	BOARD_DIR=${CONFIGS[$TARGET]%/*}
 	VARIANT=${CONFIGS[$TARGET]##*/}
 	VARIANT=${VARIANT%.px4board}
 	BUILD_DIR="$ROOT/build/$TARGET"
+	PROFILE_DIR="$LOCAL_ROOT/${BOARD_DIR#"$ROOT/"}/custom-configs/$VARIANT"
 	NUTTX_DEFCONFIG=
-	if [[ -d $BOARD_DIR/nuttx-config ]]; then
+	if source_has "${BOARD_DIR#"$ROOT/"}/nuttx-config"; then
 		local kernel=nsh
-		if [[ -d $BOARD_DIR/nuttx-config/$VARIANT ]]; then
+		if source_has "${BOARD_DIR#"$ROOT/"}/nuttx-config/$VARIANT"; then
 			kernel=$VARIANT
-		elif [[ $VARIANT == bootloader* && -d $BOARD_DIR/nuttx-config/bootloader ]]; then
+		elif [[ $VARIANT == bootloader* ]] && source_has "${BOARD_DIR#"$ROOT/"}/nuttx-config/bootloader"; then
 			kernel=bootloader
 		fi
 		NUTTX_DEFCONFIG="$BOARD_DIR/nuttx-config/$kernel/defconfig"
@@ -122,6 +145,7 @@ properties() {
 	PYTHON=${PX4_PYTHON:-}
 	if [[ -z $PYTHON ]]; then
 		if [[ -x $ROOT/.venv/bin/python ]]; then PYTHON="$ROOT/.venv/bin/python"
+		elif [[ -x $LOCAL_ROOT/.venv/bin/python ]]; then PYTHON="$LOCAL_ROOT/.venv/bin/python"
 		else PYTHON=$(command -v python3 || :); fi
 	fi
 	TOOLCHAIN=
@@ -130,10 +154,10 @@ properties() {
 		PYTHON="$(cd -- "$(dirname -- "$resolved")" && pwd)/${resolved##*/}"
 	fi
 	for config in "$BOARD_DIR/default.px4board" "${CONFIGS[$TARGET]}"; do
-		[[ -f $config ]] || continue
+		source_has "${config#"$ROOT/"}" || continue
 		while IFS= read -r line; do
 			case $line in CONFIG_BOARD_TOOLCHAIN=*) TOOLCHAIN=${line#*=}; TOOLCHAIN=${TOOLCHAIN//\"/} ;; esac
-		done < "$config"
+		done < <(source_read "${config#"$ROOT/"}")
 	done
 }
 
@@ -143,7 +167,7 @@ choose() {
 	shift 2
 	if [[ $UI == whiptail ]]; then
 		whiptail --title "$title" --cancel-button 'Назад' --menu "$prompt" \
-			"$HEIGHT" "$WIDTH" "$((HEIGHT - 9))" "$@" 3>&1 1>&2 2>&3
+			"$HEIGHT" "$WIDTH" "$((HEIGHT - 13))" "$@" 3>&1 1>&2 2>&3
 		return $?
 	fi
 	local -a entries=("$@")
@@ -205,11 +229,14 @@ doctor() {
 }
 
 info() {
+	printf '%s\nВыбрано: %s\nИсходники: %s\n' "$(current_source_label)" "$SOURCE_REF" "$ROOT"
+	[[ -z $SOURCE_COMMIT ]] || printf 'Commit: %s\n' "$SOURCE_COMMIT"
 	printf 'Цель: %s\nТип сборки: %s; задач: %s\nPython: %s\n' "$TARGET" "$BUILD_TYPE" "$JOBS" "${PYTHON:-не найден}"
 	printf 'PX4: %s\nЯдро: %s\nСборка: %s\n' "${CONFIGS[$TARGET]}" "${NUTTX_DEFCONFIG:-без NuttX}" "$BUILD_DIR"
 	printf '\nАрхивы операций: %s/artifacts/%s\n' "$STATE" "$TARGET"
 	printf 'Успешные сборки отмечены SUCCESS; состав и SHA256 записаны в SHA256SUMS.\n'
 	printf '\nЖурналы: %s/logs\nРезервные копии конфигураций: %s/backups\n' "$STATE" "$STATE"
+	printf 'Кастомные конфигурации: %s\n' "$PROFILE_DIR"
 }
 
 run_command() {
@@ -269,6 +296,7 @@ collect_artifacts() {
 		{
 			printf 'Target: %s\nBuild type: %s\nFinished: %s\n' "$TARGET" "$BUILD_TYPE" "$(date -Iseconds)"
 			printf 'Git HEAD: %s\n' "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf unknown)"
+			printf 'Source ref: %s\nSource directory: %s\n' "$SOURCE_REF" "$ROOT"
 			printf '\nWorking tree at completion:\n'
 			git -C "$ROOT" status --short 2>/dev/null || :
 		} > SUCCESS
@@ -471,6 +499,7 @@ perform() {
 	case $ACTION in
 		info) info; return ;;
 		doctor) doctor; return ;;
+		list-configs) list_profiles; return ;;
 		build) ;;
 		build-upload)
 			[[ -n $NUTTX_DEFCONFIG ]] || {
@@ -480,22 +509,28 @@ perform() {
 			[[ $VARIANT != allyes* ]] || { printf 'allyes не поддерживает boardconfig.\n' >&2; return 1; }
 			goal=boardconfig; terminal=1; config=${CONFIGS[$TARGET]} ;;
 		kernel-config)
-			[[ -f $NUTTX_DEFCONFIG ]] || { printf 'Для %s конфигуратора NuttX нет (SITL использует ОС компьютера).\n' "$TARGET" >&2; return 1; }
+			if [[ -z $NUTTX_DEFCONFIG ]] || ! source_has "${NUTTX_DEFCONFIG#"$ROOT/"}"; then
+				printf 'Для %s конфигуратора NuttX нет (SITL использует ОС компьютера).\n' "$TARGET" >&2; return 1
+			fi
 			goal=menuconfig; terminal=1; config=$NUTTX_DEFCONFIG ;;
 		clean)
 			[[ -d $BUILD_DIR ]] || { printf 'Каталог сборки пока не создан.\n'; return 0; }
 			goal=clean ;;
 		run)
 			[[ $TARGET == px4_sitl_* ]] || { printf 'Запуск симулятора доступен только для px4_sitl.\n' >&2; return 1; }
+			[[ $SIMULATOR =~ ^[a-zA-Z0-9_-]+$ ]] || return 1
 			case $SIMULATOR in
 				jmavsim) ;;
 				gz_*|sihsim_*)
-					compgen -G "$ROOT/ROMFS/px4fmu_common/init.d-posix/airframes/[0-9]*_$SIMULATOR" >/dev/null || {
+					if [[ $SOURCE_REF == current || -e $ROOT/.git ]]; then
+						compgen -G "$ROOT/ROMFS/px4fmu_common/init.d-posix/airframes/[0-9]*_$SIMULATOR" >/dev/null
+					else
+						git -C "$LOCAL_ROOT" ls-tree -r --name-only "$SOURCE_COMMIT" -- ROMFS/px4fmu_common/init.d-posix/airframes | grep -E "/[0-9]+_$SIMULATOR$" >/dev/null
+					fi || {
 						printf 'Неизвестная модель: %s\n' "$SIMULATOR" >&2; return 1;
 					} ;;
 				*) printf 'Неизвестный симулятор: %s\n' "$SIMULATOR" >&2; return 1 ;;
 			esac
-			[[ $SIMULATOR =~ ^[a-zA-Z0-9_-]+$ ]] || return 1
 			goal=$SIMULATOR; terminal=1 ;;
 	esac
 	if (( ! DRY_RUN )); then
@@ -510,6 +545,8 @@ perform() {
 	# A subshell releases the operation context on failures and cancellation.
 	(
 		if [[ $ACTION == upload ]]; then upload_firmware; exit $?; fi
+		prepare_source || exit $?
+		if [[ $ACTION == save-config || $ACTION == load-config ]]; then config_profile; exit $?; fi
 		if [[ $ACTION == python-setup ]]; then
 			command -v python3 >/dev/null || { printf 'Установите Python 3 и python3-venv.\n' >&2; exit 1; }
 			if [[ ! -x $ROOT/.venv/bin/python ]]; then
@@ -540,7 +577,8 @@ perform() {
 			export CMAKE_ARGS="${CMAKE_ARGS:-} -DPython3_EXECUTABLE=$python_arg -DPYTHON_EXECUTABLE=$python_arg"
 		fi
 		export PX4_CMAKE_BUILD_TYPE=$BUILD_TYPE CMAKE_BUILD_PARALLEL_LEVEL=$JOBS
-		printf '\nЦель: %s | %s | задач: %s\nPython: %s\n' "$TARGET" "$BUILD_TYPE" "$JOBS" "${PYTHON:-не найден}"
+		printf '\nИсходники: %s\nЦель: %s | %s | задач: %s\nPython: %s\n' "$SOURCE_REF" "$TARGET" "$BUILD_TYPE" "$JOBS" "${PYTHON:-не найден}"
+		[[ $SOURCE_REF != current ]] || printf '%s\n' "$(current_source_label)"
 		run_command "$terminal" "${command[@]}" || exit $?
 		if [[ $ACTION == build || $ACTION == build-upload ]]; then
 			if ((DRY_RUN)); then
@@ -567,6 +605,10 @@ perform() {
 	return "$status"
 }
 
+if ((LIST_REFS)); then list_refs; exit $?; fi
+set_source "$SOURCE_REF" || die "Не удалось выбрать версию: $SOURCE_REF"
+if ((LIST_TARGETS)); then printf '%s\n' "${!CONFIGS[@]}" | LC_ALL=C sort; exit 0; fi
+[[ -n ${CONFIGS[$TARGET]:-} ]] || die "Неизвестная конфигурация для $SOURCE_REF: $TARGET"
 properties
 if [[ -n $ACTION ]]; then perform; exit $?; fi
 [[ -t 0 && -t 1 ]] || die 'Для меню нужен терминал; используйте --action или --help'
@@ -577,16 +619,21 @@ WIDTH=$(tput cols 2>/dev/null || printf '80'); HEIGHT=$(tput lines 2>/dev/null |
 if (( ! FORCE_TEXT && WIDTH >= 70 && HEIGHT >= 22 )) && command -v whiptail >/dev/null; then UI=whiptail; fi
 
 while :; do
-	items=(target 'Выбрать плату и вариант' build 'Собрать прошивку' px4-config 'Настроить PX4: модули и драйверы')
+	items=(source 'Выбрать текущую ветку, другую ветку или версию' target 'Выбрать плату и вариант' build 'Собрать прошивку' px4-config 'Настроить PX4: модули и драйверы')
 	[[ -n $NUTTX_DEFCONFIG ]] && items+=(kernel-config 'Настроить ядро NuttX')
+	items+=(save-config 'Сохранить кастомную конфигурацию' load-config 'Загрузить кастомную конфигурацию')
 	[[ -n $NUTTX_DEFCONFIG ]] && items+=(build-upload 'Собрать и загрузить прошивку')
 	items+=(upload 'Загрузить имеющийся .px4 / .bin без сборки')
 	[[ $TARGET == px4_sitl_* ]] && items+=(run 'Собрать и запустить SITL')
 	items+=(options 'Тип сборки и параллельные задачи' info 'Пути и результаты сборки' doctor 'Проверить зависимости'
 		python-setup 'Подготовить Python: .venv и requirements.txt' clean 'Очистить результаты выбранной сборки')
-	ACTION=$(choose 'PX4 Build' "$TARGET | $BUILD_TYPE | задач: $JOBS" "${items[@]}") || break
+	ACTION=$(choose 'PX4 Build' "$(current_source_label)
+Выбрано: $SOURCE_REF
+$TARGET | $BUILD_TYPE | задач: $JOBS" "${items[@]}") || break
 	case $ACTION in
+		source) select_source || :; continue ;;
 		target) select_target || :; continue ;;
+		save-config|load-config) select_profile || { pause; continue; } ;;
 		upload) select_firmware || continue ;;
 		options)
 			next_type=$(choose 'Тип сборки' 'Профиль компиляции' RelWithDebInfo 'Оптимизация + символы отладки' Release 'Оптимизация' Debug 'Отладка' MinSizeRel 'Минимальный размер') || continue
