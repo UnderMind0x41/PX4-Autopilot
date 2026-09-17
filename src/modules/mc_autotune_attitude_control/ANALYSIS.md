@@ -1,5 +1,10 @@
 # Autotune response validation: comparison and evidence
 
+Follow-up: [isolated original-X500 investigation](YAW_DIAGNOSIS.md) reproduces
+the yaw failure at speed 1 from both the MAVLink harness and the actual GCS UI,
+and identifies a poorly conditioned yaw regression. It does not establish that
+replacing the acceptance algorithm is necessary.
+
 ## Conclusion
 
 The proposed MC Autotune replaces acceptance based on RLS coefficient covariance
