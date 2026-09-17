@@ -41,13 +41,12 @@
 
 using namespace matrix;
 
-ModuleBase::Descriptor McAutotuneAttitudeControl::desc{task_spawn, custom_command, print_usage};
-
 McAutotuneAttitudeControl::McAutotuneAttitudeControl() :
 	ModuleParams(nullptr),
 	WorkItem(MODULE_NAME, px4::wq_configurations::hp_default)
 {
 	_autotune_attitude_control_status_pub.advertise();
+	_param_mc_at_start.reset();
 }
 
 McAutotuneAttitudeControl::~McAutotuneAttitudeControl()
@@ -63,7 +62,7 @@ bool McAutotuneAttitudeControl::init()
 		return false;
 	}
 
-	_signal_filter.setParameters(static_cast<uint64_t>(_publishing_dt_s * 1e6f), 200_ms); // runs in the slow publishing loop
+	_signal_filter.setParameters(_publishing_dt_s, .2f); // runs in the slow publishing loop
 
 	return true;
 }
@@ -73,7 +72,7 @@ void McAutotuneAttitudeControl::Run()
 	if (should_exit()) {
 		_parameter_update_sub.unregisterCallback();
 		_vehicle_torque_setpoint_sub.unregisterCallback();
-		exit_and_cleanup(desc);
+		exit_and_cleanup();
 		return;
 	}
 
@@ -105,21 +104,16 @@ void McAutotuneAttitudeControl::Run()
 		}
 	}
 
-	if (_vehicle_command_sub.updated()) {
-		vehicle_command_s vehicle_command;
+	// v1.17 MAVLink requests autotune through MC_AT_START.
+	if (_state == state::idle && _param_mc_at_start.get()) {
+		vehicle_status_s status{};
+		_vehicle_status_sub.copy(&status);
+		_vehicle_cmd_start_autotune = status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_ROTARY_WING
+					      && !status.in_transition_mode;
 
-		if (_vehicle_command_sub.copy(&vehicle_command)) {
-			if (vehicle_command.command == vehicle_command_s::VEHICLE_CMD_DO_AUTOTUNE_ENABLE) {
-				vehicle_status_s vehicle_status{};
-				_vehicle_status_sub.copy(&vehicle_status);
-
-				// Both autotune modules run on VTOL; only the active vehicle type owns the command.
-				if (vehicle_status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_ROTARY_WING
-				    && !vehicle_status.in_transition_mode
-				    && fabsf(vehicle_command.param1 - 1.0f) < FLT_EPSILON && fabsf(vehicle_command.param2) < FLT_EPSILON) {
-					_vehicle_cmd_start_autotune = true;
-				}
-			}
+		if (!_vehicle_cmd_start_autotune) {
+			_param_mc_at_start.set(false);
+			_param_mc_at_start.commit();
 		}
 	}
 
@@ -614,6 +608,8 @@ void McAutotuneAttitudeControl::saveGainsToParams()
 void McAutotuneAttitudeControl::stopAutotune()
 {
 	_vehicle_cmd_start_autotune = false;
+	_param_mc_at_start.set(false);
+	_param_mc_at_start.commit();
 }
 
 const Vector3f McAutotuneAttitudeControl::getIdentificationSignal()
@@ -662,8 +658,8 @@ int McAutotuneAttitudeControl::task_spawn(int argc, char *argv[])
 	McAutotuneAttitudeControl *instance = new McAutotuneAttitudeControl();
 
 	if (instance) {
-		desc.object.store(instance);
-		desc.task_id = task_id_is_work_queue;
+		_object.store(instance);
+		_task_id = task_id_is_work_queue;
 
 		if (instance->init()) {
 			return PX4_OK;
@@ -674,8 +670,8 @@ int McAutotuneAttitudeControl::task_spawn(int argc, char *argv[])
 	}
 
 	delete instance;
-	desc.object.store(nullptr);
-	desc.task_id = -1;
+	_object.store(nullptr);
+	_task_id = -1;
 
 	return PX4_ERROR;
 }
@@ -713,5 +709,5 @@ int McAutotuneAttitudeControl::print_usage(const char *reason)
 
 extern "C" __EXPORT int mc_autotune_attitude_control_main(int argc, char *argv[])
 {
-	return ModuleBase::main(McAutotuneAttitudeControl::desc, argc, argv);
+	return McAutotuneAttitudeControl::main(argc, argv);
 }

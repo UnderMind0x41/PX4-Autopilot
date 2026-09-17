@@ -43,7 +43,12 @@
 class McAutotuneAttitudeControlTest : public ::testing::Test
 {
 public:
-	static void SetUpTestSuite() { hrt_work_queue_init(); }
+	static void SetUpTestSuite()
+	{
+		hrt_init();
+		hrt_work_queue_init();
+		param_control_autosave(false);
+	}
 
 protected:
 	void SetUp() override

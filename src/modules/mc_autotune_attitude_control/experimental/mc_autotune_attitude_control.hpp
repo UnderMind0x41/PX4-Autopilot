@@ -62,19 +62,16 @@
 #include <uORB/topics/parameter_update.h>
 #include <uORB/topics/autotune_attitude_control_status.h>
 #include <uORB/topics/vehicle_angular_velocity.h>
-#include <uORB/topics/vehicle_command.h>
 #include <uORB/topics/vehicle_status.h>
 #include <uORB/topics/vehicle_torque_setpoint.h>
 #include <mathlib/mathlib.h>
 
 using namespace time_literals;
 
-class McAutotuneAttitudeControl : public ModuleBase, public ModuleParams,
+class McAutotuneAttitudeControl : public ModuleBase<McAutotuneAttitudeControl>, public ModuleParams,
 	public px4::ScheduledWorkItem
 {
 public:
-	static Descriptor desc;
-
 	McAutotuneAttitudeControl();
 	~McAutotuneAttitudeControl() override;
 
@@ -119,7 +116,6 @@ private:
 	uORB::Subscription _manual_control_setpoint_sub{ORB_ID(manual_control_setpoint)};
 	uORB::Subscription _vehicle_angular_velocity_sub{ORB_ID(vehicle_angular_velocity)};
 	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
-	uORB::Subscription _vehicle_command_sub{ORB_ID(vehicle_command)};
 
 	uORB::PublicationData<autotune_attitude_control_status_s> _autotune_attitude_control_status_pub{ORB_ID(autotune_attitude_control_status)};
 
@@ -205,6 +201,7 @@ private:
 	perf_counter_t _cycle_perf{perf_alloc(PC_ELAPSED, MODULE_NAME": cycle time")};
 
 	DEFINE_PARAMETERS(
+		(ParamBool<px4::params::MC_AT_START>) _param_mc_at_start,
 		(ParamFloat<px4::params::MC_AT_SYSID_AMP>) _param_mc_at_sysid_amp,
 		(ParamInt<px4::params::MC_AT_APPLY>) _param_mc_at_apply,
 		(ParamFloat<px4::params::MC_AT_RISE_TIME>) _param_mc_at_rise_time,
@@ -212,7 +209,6 @@ private:
 		(ParamFloat<px4::params::MC_AT_TIMEOUT>) _param_mc_at_timeout,
 		(ParamFloat<px4::params::MC_YAW_TQ_CUTOFF>) _param_mc_yaw_tq_cutoff,
 		(ParamInt<px4::params::MC_BAT_SCALE_EN>) _param_mc_bat_scale_en,
-		(ParamFloat<px4::params::MC_REF_FF>) _param_mc_ref_ff,
 		(ParamFloat<px4::params::MC_ROLLRATE_FF>) _param_mc_rollrate_ff,
 		(ParamFloat<px4::params::MC_PITCHRATE_FF>) _param_mc_pitchrate_ff,
 		(ParamFloat<px4::params::MC_YAWRATE_FF>) _param_mc_yawrate_ff,

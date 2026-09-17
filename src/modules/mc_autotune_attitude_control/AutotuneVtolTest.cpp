@@ -44,7 +44,12 @@
 class AutotuneVtolTest : public ::testing::Test
 {
 public:
-	static void SetUpTestSuite() { hrt_work_queue_init(); }
+	static void SetUpTestSuite()
+	{
+		hrt_init();
+		hrt_work_queue_init();
+		param_control_autosave(false);
+	}
 
 protected:
 	void SetUp() override { param_reset_all(); }
@@ -58,22 +63,21 @@ protected:
 		status.in_transition_mode = transition;
 		_status_pub.publish(status);
 
-		vehicle_command_s request{};
-		request.timestamp = hrt_absolute_time();
-		request.command = vehicle_command_s::VEHICLE_CMD_DO_AUTOTUNE_ENABLE;
-		request.param1 = 1.f;
-		_command_pub.publish(request);
+		const int32_t start = 1;
+		param_set_no_notification(param_find("MC_AT_START"), &start);
+		param_set_no_notification(param_find("FW_AT_START"), &start);
+		_mc.updateParams();
+		_fw.updateParams();
 		_mc.Run();
 		_fw.Run();
 	}
 
 	bool mcStarted() const { return _mc._vehicle_cmd_start_autotune; }
-	bool fwStarted() const { return _fw._vehicle_cmd_start_autotune; }
+	bool fwStarted() const { return _fw._param_fw_at_start.get(); }
 
 	McAutotuneAttitudeControl _mc;
 	FwAutotuneAttitudeControl _fw{true};
 	uORB::Publication<vehicle_status_s> _status_pub{ORB_ID(vehicle_status)};
-	uORB::Publication<vehicle_command_s> _command_pub{ORB_ID(vehicle_command)};
 };
 
 TEST_F(AutotuneVtolTest, HoverStartsOnlyMulticopterAutotune)

@@ -98,7 +98,7 @@ PARAM_DEFINE_INT32(MC_AT_APPLY, 1);
  * Desired angular rate closed-loop rise time
  *
  * @min 0.01
- * @max 0.5
+ * @max 2.0
  * @decimal 2
  * @unit s
  * @group Autotune
