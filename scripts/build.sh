@@ -5,6 +5,7 @@ set -uo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd) || exit 1
 LOCAL_ROOT=$ROOT
 SOURCE_REF=current SOURCE_COMMIT='' PROFILE='' LIST_TARGETS=0 LIST_REFS=0
+AUTOTUNE=''
 if ((BASH_VERSINFO[0] < 4)); then
 	printf 'Требуется Bash 4 или новее.\n' >&2
 	exit 1
@@ -44,6 +45,7 @@ PX4 Build — сборка и настройка прошивок в терми�
   ./scripts/build.sh --target holybro_kakuteh7_default --action save-config --profile my-config
   ./scripts/build.sh --target holybro_kakuteh7_default --action load-config --profile my-config
   ./scripts/build.sh --target holybro_kakuteh7dualimu_default --action px4-config
+  ./scripts/build.sh --target holybro_kakuteh7_default --action autotune-config --autotune experimental
   ./scripts/build.sh --target holybro_kakuteh7dualimu_default --action kernel-config
   ./scripts/build.sh --target px4_sitl_default --action run --sim gz_x500
   ./scripts/build.sh --target holybro_kakuteh7_default --action build-upload
@@ -55,7 +57,8 @@ PX4 Build — сборка и настройка прошивок в терми�
   --ref REF           current (по умолчанию), локальная/удалённая ветка, тег или SHA
   --list-refs         текущая ветка, известные локально ветки и теги
   --action ACTION     build, build-upload, upload, px4-config, kernel-config, clean, run, info,
-                      doctor, python-setup, save-config, load-config, list-configs
+                      doctor, python-setup, save-config, load-config, list-configs, autotune-config
+  --autotune MODE     standard, experimental, disabled для --action autotune-config
   --profile NAME      имя профиля для save-config / load-config
   --firmware FILE     существующий .px4 или .bin для upload (без сборки)
   --method METHOD     auto (по умолчанию), serial или dfu
@@ -81,6 +84,9 @@ current собирает рабочий каталог: локальные ко�
 Python: PX4_PYTHON, затем .venv выбранного или основного каталога, затем python3 из PATH.
 PX4-конфигуратор сохраняет boards/.../*.px4board; NuttX — nuttx-config/.../defconfig.
 Перед открытием конфигуратора исходный файл копируется в build/.build-sh/backups.
+Автотюн: experimental заменяет стандартный алгоритм проверкой отклика;
+требует дополнительной Flash и примерно 35 КиБ heap. Настройка сохраняется
+в выбранном .px4board с резервной копией; затем выполните build.
 SITL работает без ядра NuttX. Сборка и запуск SITL — отдельные действия.
 Результаты каждой сборки с SHA256: build/.build-sh/artifacts/<target>/<операция>.
 Перед сборкой прежние конечные файлы сохраняются в previous внутри этой операции;
@@ -96,7 +102,7 @@ EOF
 die() { printf 'Ошибка: %s\n' "$*" >&2; exit 1; }
 while (($#)); do
 	case $1 in
-		--target|--action|--jobs|--build-type|--sim|--firmware|--port|--method|--dfu-serial|--ref|--profile)
+		--target|--action|--jobs|--build-type|--sim|--firmware|--port|--method|--dfu-serial|--ref|--profile|--autotune)
 			(($# >= 2)) || die "Для $1 требуется значение"
 			case $1 in
 				--target) TARGET=$2 ;; --action) ACTION=$2 ;; --jobs) JOBS=$2 ;;
@@ -104,6 +110,7 @@ while (($#)); do
 				--firmware) FIRMWARE=$2 ;; --port) PORT=$2 ;;
 				--method) UPLOAD_METHOD=$2 ;; --dfu-serial) DFU_SERIAL=$2 ;;
 				--ref) SOURCE_REF=$2 ;; --profile) PROFILE=$2 ;;
+				--autotune) AUTOTUNE=$2 ;;
 			esac
 			shift 2 ;;
 		--text) FORCE_TEXT=1; shift ;;
@@ -117,7 +124,10 @@ done
 [[ -n $TARGET ]] || die 'Имя конфигурации не может быть пустым'
 [[ $JOBS =~ ^[1-9][0-9]*$ && ${#JOBS} -le 4 ]] || die '--jobs: число от 1 до 9999'
 case $BUILD_TYPE in RelWithDebInfo|Release|Debug|MinSizeRel) ;; *) die 'Неизвестный тип сборки' ;; esac
-case $ACTION in ''|build|build-upload|upload|px4-config|kernel-config|clean|run|info|doctor|python-setup|save-config|load-config|list-configs) ;; *) die 'Неизвестное действие' ;; esac
+case $ACTION in ''|build|build-upload|upload|px4-config|kernel-config|clean|run|info|doctor|python-setup|save-config|load-config|list-configs|autotune-config) ;; *) die 'Неизвестное действие' ;; esac
+case $AUTOTUNE in ''|standard|experimental|disabled) ;; *) die '--autotune: standard, experimental или disabled' ;; esac
+[[ -z $AUTOTUNE || $ACTION == autotune-config ]] || die '--autotune применяется только к --action autotune-config'
+[[ $ACTION != autotune-config || -n $AUTOTUNE ]] || die 'Укажите --autotune standard, experimental или disabled'
 [[ -z $PROFILE || $ACTION == save-config || $ACTION == load-config ]] || die '--profile применяется только к save-config / load-config'
 [[ -z $FIRMWARE || $ACTION == upload ]] || die '--firmware применяется только к --action upload'
 case $UPLOAD_METHOD in auto|serial|dfu) ;; *) die '--method: auto, serial или dfu' ;; esac
@@ -233,6 +243,7 @@ info() {
 	[[ -z $SOURCE_COMMIT ]] || printf 'Commit: %s\n' "$SOURCE_COMMIT"
 	printf 'Цель: %s\nТип сборки: %s; задач: %s\nPython: %s\n' "$TARGET" "$BUILD_TYPE" "$JOBS" "${PYTHON:-не найден}"
 	printf 'PX4: %s\nЯдро: %s\nСборка: %s\n' "${CONFIGS[$TARGET]}" "${NUTTX_DEFCONFIG:-без NuttX}" "$BUILD_DIR"
+	if autotune_available; then printf 'Автотюн: %s\n' "$(autotune_mode)"; fi
 	printf '\nАрхивы операций: %s/artifacts/%s\n' "$STATE" "$TARGET"
 	printf 'Успешные сборки отмечены SUCCESS; состав и SHA256 записаны в SHA256SUMS.\n'
 	printf '\nЖурналы: %s/logs\nРезервные копии конфигураций: %s/backups\n' "$STATE" "$STATE"
@@ -500,6 +511,8 @@ perform() {
 		info) info; return ;;
 		doctor) doctor; return ;;
 		list-configs) list_profiles; return ;;
+		autotune-config)
+			autotune_available || { printf 'В этой версии или цели нет выбора экспериментального автотюна.\n' >&2; return 1; } ;;
 		build) ;;
 		build-upload)
 			[[ -n $NUTTX_DEFCONFIG ]] || {
@@ -546,6 +559,7 @@ perform() {
 	(
 		if [[ $ACTION == upload ]]; then upload_firmware; exit $?; fi
 		prepare_source || exit $?
+		if [[ $ACTION == autotune-config ]]; then configure_autotune; exit $?; fi
 		if [[ $ACTION == save-config || $ACTION == load-config ]]; then config_profile; exit $?; fi
 		if [[ $ACTION == python-setup ]]; then
 			command -v python3 >/dev/null || { printf 'Установите Python 3 и python3-venv.\n' >&2; exit 1; }
@@ -579,6 +593,7 @@ perform() {
 		export PX4_CMAKE_BUILD_TYPE=$BUILD_TYPE CMAKE_BUILD_PARALLEL_LEVEL=$JOBS
 		printf '\nИсходники: %s\nЦель: %s | %s | задач: %s\nPython: %s\n' "$SOURCE_REF" "$TARGET" "$BUILD_TYPE" "$JOBS" "${PYTHON:-не найден}"
 		[[ $SOURCE_REF != current ]] || printf '%s\n' "$(current_source_label)"
+		if autotune_available; then printf 'Автотюн: %s\n' "$(autotune_mode)"; fi
 		run_command "$terminal" "${command[@]}" || exit $?
 		if [[ $ACTION == build || $ACTION == build-upload ]]; then
 			if ((DRY_RUN)); then
@@ -620,6 +635,7 @@ if (( ! FORCE_TEXT && WIDTH >= 70 && HEIGHT >= 22 )) && command -v whiptail >/de
 
 while :; do
 	items=(source 'Выбрать текущую ветку, другую ветку или версию' target 'Выбрать плату и вариант' build 'Собрать прошивку' px4-config 'Настроить PX4: модули и драйверы')
+	if autotune_available; then items+=(autotune-config "Автотюн: $(autotune_mode) — выбрать реализацию"); fi
 	[[ -n $NUTTX_DEFCONFIG ]] && items+=(kernel-config 'Настроить ядро NuttX')
 	items+=(save-config 'Сохранить кастомную конфигурацию' load-config 'Загрузить кастомную конфигурацию')
 	[[ -n $NUTTX_DEFCONFIG ]] && items+=(build-upload 'Собрать и загрузить прошивку')
@@ -633,6 +649,12 @@ $TARGET | $BUILD_TYPE | задач: $JOBS" "${items[@]}") || break
 	case $ACTION in
 		source) select_source || :; continue ;;
 		target) select_target || :; continue ;;
+		autotune-config)
+			AUTOTUNE=$(choose 'Автотюн' "Плата: $TARGET. Текущий режим: $(autotune_mode).
+Выбор сохраняется в конфигурации платы; затем выполните сборку." \
+				standard 'Стандартный MC Autotune' \
+				experimental 'Экспериментальный: проверка отклика, дополнительная Flash и ~35 КиБ heap' \
+				disabled 'Отключить MC Autotune') || continue ;;
 		save-config|load-config) select_profile || { pause; continue; } ;;
 		upload) select_firmware || continue ;;
 		options)
