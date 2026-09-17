@@ -25,6 +25,9 @@ class BuildScriptTest(unittest.TestCase):
         self.write("boards/vendor/flight/nuttx-config/nsh/defconfig", "CONFIG_NSH=y\n")
         self.write("boards/vendor/flight/nuttx-config/bootloader/defconfig", "CONFIG_BOOT=y\n")
         self.write("boards/px4/sitl/default.px4board", "CONFIG_SIM=y\n")
+        self.write("src/modules/mc_autotune_attitude_control/Kconfig",
+                   "menuconfig MODULES_MC_AUTOTUNE_ATTITUDE_CONTROL\n"
+                   "config MC_AUTOTUNE_EXPERIMENTAL\n")
         self.write("Makefile", "# The test uses a stub make.\n")
         self.write("payload", "committed\n")
         self.write(".gitignore", "build/\n")
@@ -208,6 +211,46 @@ if [[ -f local-file ]]; then cat local-file >> "build/$target/$target.elf"; fi
         (self.profile() / "target").write_text("vendor_other_default\n")
         self.run_build("--action", "load-config", "--profile", "saved", ok=False)
         self.assertEqual((self.board / "default.px4board").read_text(), "CONFIG_OTHER=y\n")
+
+    def test_autotune_modes_preserve_overlay_and_backup(self):
+        base = "CONFIG_MODULES_MC_AUTOTUNE_ATTITUDE_CONTROL=y\nCONFIG_MC_AUTOTUNE_EXPERIMENTAL=y\n"
+        self.write("boards/vendor/flight/default.px4board", base)
+        overlay = self.board / "custom.px4board"
+        for mode in ("standard", "experimental", "disabled"):
+            previous = overlay.read_text()
+            self.run_build("--action", "autotune-config", "--autotune", mode,
+                           target="vendor_flight_custom")
+            self.assertEqual((self.board / "default.px4board").read_text(), base)
+            self.assertIn("CONFIG_OVERLAY=y\n", overlay.read_text())
+            enabled = "n" if mode == "disabled" else "y"
+            experimental = "y" if mode == "experimental" else "n"
+            self.assertIn(f"CONFIG_MODULES_MC_AUTOTUNE_ATTITUDE_CONTROL={enabled}\n", overlay.read_text())
+            self.assertIn(f"CONFIG_MC_AUTOTUNE_EXPERIMENTAL={experimental}\n", overlay.read_text())
+            self.assertEqual(overlay.read_text().count("CONFIG_MC_AUTOTUNE_EXPERIMENTAL="), 1)
+            backups = list(self.state.glob("backups/*-autotune-*/custom.px4board"))
+            self.assertTrue(any(path.read_text() == previous for path in backups))
+            self.assertIn(f"Автотюн: {mode}", self.run_build("--action", "info", target="vendor_flight_custom"))
+
+    def test_autotune_dry_run_and_revision_isolation(self):
+        for ref in ("current", "v1.0.0"):
+            self.run_build("--ref", ref, "--action", "autotune-config",
+                           "--autotune", "experimental", "--dry-run")
+        self.assertFalse(self.state.exists())
+        self.run_build("--ref", "v1.0.0", "--action", "autotune-config", "--autotune", "experimental")
+        config = self.state / "sources" / self.commit / "boards/vendor/flight/default.px4board"
+        self.assertIn("CONFIG_MC_AUTOTUNE_EXPERIMENTAL=y", config.read_text())
+        self.assertEqual((self.board / "default.px4board").read_text(), "CONFIG_BASE=y\n")
+
+    def test_autotune_rejects_unsupported_targets_and_options(self):
+        self.run_build("--action", "autotune-config", "--autotune", "experimental",
+                       target="vendor_flight_bootloader_secure", ok=False)
+        self.run_build("--action", "autotune-config", ok=False)
+        self.run_build("--action", "autotune-config", "--autotune", "invalid", ok=False)
+        self.run_build("--action", "build", "--autotune", "experimental", ok=False)
+        self.write("src/modules/mc_autotune_attitude_control/Kconfig", "config OLD_AUTOTUNE\n")
+        self.run_build("--action", "autotune-config", "--autotune", "experimental", ok=False)
+        self.assertFalse(self.state.exists())
+        self.assertEqual((self.board / "default.px4board").read_text(), "CONFIG_BASE=y\n")
 
 
 if __name__ == "__main__":

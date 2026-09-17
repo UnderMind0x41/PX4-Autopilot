@@ -1,6 +1,59 @@
 #!/usr/bin/env bash
 # Source/version and configuration profile helpers for build.sh.
 
+autotune_available() {
+	case $VARIANT in *bootloader*|allyes*) return 1 ;; esac
+	local path=src/modules/mc_autotune_attitude_control/Kconfig
+	source_has "$path" && source_read "$path" | grep -q '^config MC_AUTOTUNE_EXPERIMENTAL$'
+}
+
+autotune_mode() {
+	local config line enabled=n experimental=n
+	local -a configs=("${CONFIGS[$TARGET]}")
+	case $VARIANT in
+		*default*|*performance-test*|*bootloader*) ;;
+		*) configs=("$BOARD_DIR/default.px4board" "${configs[@]}") ;;
+	esac
+	for config in "${configs[@]}"; do
+		source_has "${config#"$ROOT/"}" || continue
+		while IFS= read -r line || [[ -n $line ]]; do
+			case $line in
+				CONFIG_MODULES_MC_AUTOTUNE_ATTITUDE_CONTROL=*) enabled=${line#*=} ;;
+				'# CONFIG_MODULES_MC_AUTOTUNE_ATTITUDE_CONTROL is not set') enabled=n ;;
+				CONFIG_MC_AUTOTUNE_EXPERIMENTAL=*) experimental=${line#*=} ;;
+				'# CONFIG_MC_AUTOTUNE_EXPERIMENTAL is not set') experimental=n ;;
+			esac
+		done < <(source_read "${config#"$ROOT/"}")
+	done
+	if [[ $enabled != y ]]; then printf 'disabled'
+	elif [[ $experimental == y ]]; then printf 'experimental'
+	else printf 'standard'; fi
+}
+
+# Called under the same repository lock as builds and configuration profiles.
+configure_autotune() {
+	local config=${CONFIGS[$TARGET]} backup temporary enabled=y experimental=n
+	[[ $AUTOTUNE != disabled ]] || enabled=n
+	[[ $AUTOTUNE != experimental ]] || experimental=y
+	printf 'Автотюн: %s -> %s\nКонфигурация: %s\n' "$(autotune_mode)" "$AUTOTUNE" "$config"
+	((DRY_RUN)) && return 0
+	mkdir -p "$STATE/backups" || return 1
+	backup=$(mktemp -d "$STATE/backups/${TARGET}-autotune-$(date +%Y%m%d-%H%M%S)-XXXXXX") || return 1
+	cp -p -- "$config" "$backup/${config##*/}" || return 1
+	temporary=$(mktemp "$config.XXXXXX") || return 1
+	if ! awk -v enabled="$enabled" -v experimental="$experimental" '
+		/^(# )?CONFIG_(MODULES_MC_AUTOTUNE_ATTITUDE_CONTROL|MC_AUTOTUNE_EXPERIMENTAL)(=| is not set)/ { next }
+		{ print }
+		END {
+			print "CONFIG_MODULES_MC_AUTOTUNE_ATTITUDE_CONTROL=" enabled
+			print "CONFIG_MC_AUTOTUNE_EXPERIMENTAL=" experimental
+		}' "$config" > "$temporary" || ! chmod --reference="$config" "$temporary" || ! mv -- "$temporary" "$config"; then
+		rm -f -- "$temporary"
+		return 1
+	fi
+	printf 'Сохранено. Резервная копия: %s\nДля применения соберите прошивку.\n' "$backup"
+}
+
 current_source_label() {
 	local branch sha dirty
 	branch=$(git -C "$LOCAL_ROOT" symbolic-ref --short -q HEAD) || branch='detached HEAD'
