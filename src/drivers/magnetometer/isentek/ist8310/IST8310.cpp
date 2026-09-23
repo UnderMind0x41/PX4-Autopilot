@@ -101,10 +101,31 @@ int IST8310::probe()
 			return PX4_OK;
 		}
 
-		// send reset command to all four possible addresses
+		// Avoid resetting another IST8310 that was already started at a
+		// different address. If no sensor responds, retain the recovery probe
+		// across all four possible addresses.
+		bool other_sensor_present = false;
+
 		for (uint8_t addr = 0x0C; addr <= 0x0F; addr++) {
-			set_device_address(addr);
+			if (addr != start_addr) {
+				set_device_address(addr);
+
+				if (RegisterRead(Register::WAI) == Device_ID) {
+					other_sensor_present = true;
+					break;
+				}
+			}
+		}
+
+		if (other_sensor_present) {
+			set_device_address(start_addr);
 			RegisterWrite(Register::CNTL2, CNTL2_BIT::SRST);
+
+		} else {
+			for (uint8_t addr = 0x0C; addr <= 0x0F; addr++) {
+				set_device_address(addr);
+				RegisterWrite(Register::CNTL2, CNTL2_BIT::SRST);
+			}
 		}
 
 		px4_usleep(10'000);

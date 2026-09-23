@@ -72,6 +72,8 @@ Internal compasses are disabled by default if an external compass is available.
 On [Pixhawk Series](../flight_controller/pixhawk_series.md) flight controllers you can connect to either the `GPS1` or `GPS2` ports (which have pins for I2C/SPI).
 No further configuration is required.
 
+The IST8310 driver in this source tree probes I2C addresses `0x0e` and `0x0c` when started without an explicit address. This includes automatic external I2C probing when `SENS_EXT_I2C_PRB=1`, provided the flight controller firmware includes the driver. Use `-a` to select only one address when starting the driver manually.
+
 <!-- On flight controllers that do not follow the Pixhawk connector standard, you will need to connect to an I2C/SPI port. -->
 
 ## CAN Compass Setup

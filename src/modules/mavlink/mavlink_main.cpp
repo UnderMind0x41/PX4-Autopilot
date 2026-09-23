@@ -1637,6 +1637,20 @@ Mavlink::configure_streams_to_default(const char *configure_single_stream)
 		//stream nothing
 		break;
 
+	case MAVLINK_MODE_ELRS:
+		// Compact telemetry for a full-duplex ELRS link and Yaapu.
+		configure_stream_local("ATTITUDE", 4.0f);
+		configure_stream_local("BATTERY_STATUS", 1.0f);
+		configure_stream_local("GPS_RAW_INT", 1.0f);
+		configure_stream_local("GLOBAL_POSITION_INT", 1.0f);
+		configure_stream_local("HOME_POSITION", 0.2f);
+		configure_stream_local("VFR_HUD", 1.0f);
+		configure_stream_local("ALTITUDE", 0.5f);
+		configure_stream_local("SYS_STATUS", 0.2f);
+		configure_stream_local("SYSTEM_TIME", 0.1f);
+		configure_stream_local("SCALED_PRESSURE", 0.2f);
+		break;
+
 	case MAVLINK_MODE_CONFIG: // USB
 		// Note: streams requiring low latency come first
 		configure_stream_local("TIMESYNC", 10.0f);
@@ -2114,6 +2128,9 @@ Mavlink::task_main(int argc, char *argv[])
 
 					} else if (strcmp(myoptarg, "distance_sensor") == 0) {
 						_mode = MAVLINK_MODE_DISTANCE_SENSOR;
+
+					} else if (strcmp(myoptarg, "elrs") == 0) {
+						_mode = MAVLINK_MODE_ELRS;
 
 					} else {
 						PX4_ERR("invalid mode");

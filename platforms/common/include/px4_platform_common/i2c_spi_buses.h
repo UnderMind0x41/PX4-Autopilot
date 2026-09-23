@@ -182,6 +182,7 @@ public:
 #endif // CONFIG_SPI
 #if defined(CONFIG_I2C)
 	uint8_t i2c_address {0}; ///< I2C address (a driver must set the default address)
+	bool i2c_address_explicit {false}; ///< true if -a was supplied on the command line
 #endif // CONFIG_I2C
 	bool quiet_start {false}; ///< do not print a message when startup fails
 	bool keep_running{false}; ///< keep driver running even if no device is detected on startup

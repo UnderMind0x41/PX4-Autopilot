@@ -174,6 +174,7 @@ int BusCLIArguments::getOpt(int argc, char *argv[], const char *options)
 			}
 
 			i2c_address = (int)strtol(_optarg, nullptr, 0);
+			i2c_address_explicit = true;
 			break;
 #endif // CONFIG_I2C
 #if defined(CONFIG_SPI)

@@ -40,6 +40,7 @@ void IST8310::print_usage()
 {
 	PRINT_MODULE_USAGE_NAME("ist8310", "driver");
 	PRINT_MODULE_USAGE_SUBCATEGORY("magnetometer");
+	PRINT_MODULE_DESCRIPTION("Without -a, start probes I2C addresses 0x0e and 0x0c.");
 	PRINT_MODULE_USAGE_COMMAND("start");
 	PRINT_MODULE_USAGE_PARAMS_I2C_SPI_DRIVER(true, false);
 	PRINT_MODULE_USAGE_PARAMS_I2C_ADDRESS(0x0E);
@@ -70,11 +71,38 @@ extern "C" int ist8310_main(int argc, char *argv[])
 		return -1;
 	}
 
-	BusInstanceIterator iterator(MODULE_NAME, cli, DRV_MAG_DEVTYPE_IST8310);
-
 	if (!strcmp(verb, "start")) {
-		return ThisDriver::module_start(cli, iterator);
+		const bool probe_both_addresses = !cli.i2c_address_explicit && cli.bus_option != I2CSPIBusOption::All;
+		const bool quiet_start = cli.quiet_start;
+
+		if (probe_both_addresses) {
+			// Report failure only after both addresses have been tried.
+			cli.quiet_start = true;
+		}
+
+		int default_result;
+
+		{
+			BusInstanceIterator iterator(MODULE_NAME, cli, DRV_MAG_DEVTYPE_IST8310);
+			default_result = ThisDriver::module_start(cli, iterator);
+		}
+
+		if (!probe_both_addresses) {
+			return default_result;
+		}
+
+		cli.i2c_address = I2C_ADDRESS_ALTERNATE;
+		BusInstanceIterator alternate_iterator(MODULE_NAME, cli, DRV_MAG_DEVTYPE_IST8310);
+		const int alternate_result = ThisDriver::module_start(cli, alternate_iterator);
+
+		if (default_result != 0 && alternate_result != 0 && !quiet_start) {
+			PX4_WARN("no IST8310 found at I2C address 0x0e or 0x0c");
+		}
+
+		return (default_result == 0 || alternate_result == 0) ? 0 : -1;
 	}
+
+	BusInstanceIterator iterator(MODULE_NAME, cli, DRV_MAG_DEVTYPE_IST8310);
 
 	if (!strcmp(verb, "stop")) {
 		return ThisDriver::module_stop(iterator);

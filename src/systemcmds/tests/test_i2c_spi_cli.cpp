@@ -86,6 +86,7 @@ bool I2CSPICLITest::test_basic()
 		BusCLIArguments cli{true, true};
 #if defined(CONFIG_I2C)
 		cli.default_i2c_frequency = 1234;
+		cli.i2c_address = 0x0e;
 #endif // CONFIG_I2C
 #if defined(CONFIG_SPI)
 		cli.default_spi_frequency = 12345;
@@ -98,6 +99,7 @@ bool I2CSPICLITest::test_basic()
 #if defined(CONFIG_I2C)
 		ut_assert_true(cli.bus_option == I2CSPIBusOption::I2CInternal);
 		ut_assert_true(cli.bus_frequency == cli.default_i2c_frequency);
+		ut_assert_false(cli.i2c_address_explicit);
 #endif // CONFIG_I2C
 	}
 
@@ -157,6 +159,7 @@ bool I2CSPICLITest::test_basic()
 #if defined(CONFIG_I2C)
 		ut_assert_true(cli.bus_option == I2CSPIBusOption::I2CExternal);
 		ut_assert_true(cli.i2c_address == 0x14);
+		ut_assert_true(cli.i2c_address_explicit);
 #endif // CONFIG_I2C
 	}
 

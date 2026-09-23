@@ -210,6 +210,7 @@ public:
 		MAVLINK_MODE_UAVIONIX,
 		MAVLINK_MODE_LOW_BANDWIDTH,
 		MAVLINK_MODE_DISTANCE_SENSOR,
+		MAVLINK_MODE_ELRS,
 		MAVLINK_MODE_COUNT
 	};
 
@@ -272,6 +273,9 @@ public:
 
 		case MAVLINK_MODE_DISTANCE_SENSOR:
 			return "DistanceSensor";
+
+		case MAVLINK_MODE_ELRS:
+			return "ELRS Telemetry";
 
 		default:
 			return "Unknown";

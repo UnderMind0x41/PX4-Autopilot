@@ -40,6 +40,7 @@ The parameters for each instance are:
   - _Gimbal_: Messages for a gimbal. Note this also enables [message forwarding](#MAV_X_FORWARD)
   - _Onboard Low Bandwidth_: Standard set of messages for a companion computer connected on a lower speed link.
   - _uAvionix_: Messages for a uAvionix ADS-B beacon.
+  - _ELRS Telemetry_: Compact telemetry for ELRS and Yaapu, including attitude, position, battery, altitude and system status. This mode does not stream `HIGH_LATENCY2`.
 
   ::: info
   If you need to find the specific set of message for each mode search for `MAVLINK_MODE_` in [/src/modules/mavlink/mavlink_main.cpp](https://github.com/PX4/PX4-Autopilot/blob/main/src/modules/mavlink/mavlink_main.cpp).
@@ -49,6 +50,8 @@ The parameters for each instance are:
   The mode defines the _default_ messages and rates.
   A connected MAVLink system can still request the streams/rates that it wants using [MAV_CMD_SET_MESSAGE_INTERVAL](https://mavlink.io/en/messages/common.html#MAV_CMD_SET_MESSAGE_INTERVAL).
   :::
+
+  For ELRS telemetry with Yaapu, set the instance connected to the receiver to `ELRS Telemetry` (`MAV_X_MODE=15`) and reboot. Set `MAV_X_CONFIG` to the receiver's serial port, then set the corresponding serial baud rate and `MAV_X_RATE` for the link. The mode reproduces the compact Yaapu stream set without an SD-card `extras.txt` script. Runtime stream changes made through `mavlink stream` or `MAV_CMD_SET_MESSAGE_INTERVAL` are not saved as parameters. If an existing `extras.txt` configures streams for the same instance, remove those commands so they do not override the selected mode.
 
 - <a id="MAV_X_RATE"></a>[MAV_X_RATE](../advanced_config/parameter_reference.md#MAV_0_MODE) - Set the maximum _data rate_ for this instance (bytes/second).
   - This is the combined rate for all streams of individual message (the rates for individual messages are reduced if the total rate exceeds this value).
